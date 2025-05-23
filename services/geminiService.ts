@@ -1,4 +1,3 @@
-
 import { GoogleGenAI, GenerateContentResponse, Chat } from "@google/genai";
 import { TEXT_MODEL_NAME, IMAGE_MODEL_NAME } from '../constants';
 import type { PinyinResponse, KeywordsResponse, IdentifiedNamesResponse, GenerateContentResponseWithGM } from '../types';
@@ -57,20 +56,55 @@ export const getPinyinForName = async (hanziName: string): Promise<PinyinRespons
 
 export const getKeywordsForName = async (pinyinName: string): Promise<KeywordsResponse> => {
   if (!ai) throw new Error("Gemini AI SDK not initialized.");
-  try {
-    const prompt = `For the Pinyin name "${pinyinName}", brainstorm 3-5 English phonetic associations or common meanings for its syllables. Focus on concrete, visualizable nouns or simple actions. Provide these keywords as a JSON object with a single key "keywords" which is an array of strings. For example, for "Měi Lì", respond with {"keywords": ["beautiful flower", "power", "dew"]}.`;
-    const response: GenerateContentResponse = await ai.models.generateContent({
-      model: TEXT_MODEL_NAME,
-      contents: prompt,
-      config: { responseMimeType: "application/json" }
-    });
-    
-    return parseJsonFromGeminiResponse(response.text, { keywords: [] });
+  
+  const maxRetries = 3;
+  let lastError: Error | null = null;
+  
+  for (let attempt = 1; attempt <= maxRetries; attempt++) {
+    try {
+      // Clean and validate the input
+      const cleanPinyinName = pinyinName.trim();
+      if (!cleanPinyinName) {
+        throw new Error("Pinyin name cannot be empty");
+      }
 
-  } catch (error) {
-    console.error('Error getting keywords:', error);
-    throw new Error(`Failed to get keywords for ${pinyinName}. ${error instanceof Error ? error.message : String(error)}`);
+      const prompt = `For the Pinyin name "${cleanPinyinName}", brainstorm 3-5 English phonetic associations or common meanings for its syllables. Focus on concrete, visualizable nouns or simple actions. Provide these keywords as a JSON object with a single key "keywords" which is an array of strings. For example, for "Měi Lì", respond with {"keywords": ["beautiful flower", "power", "dew"]}.`;
+      
+      const response: GenerateContentResponse = await ai.models.generateContent({
+        model: TEXT_MODEL_NAME,
+        contents: prompt,
+        config: { 
+          responseMimeType: "application/json",
+          temperature: 0.7, // Add some randomness to avoid getting stuck
+          maxOutputTokens: 1024 // Limit response size
+        }
+      });
+      
+      const result = parseJsonFromGeminiResponse(response.text, { keywords: [] });
+      
+      // Validate the response
+      if (!result.keywords || !Array.isArray(result.keywords) || result.keywords.length === 0) {
+        throw new Error("Invalid response format or empty keywords");
+      }
+      
+      return result;
+
+    } catch (error) {
+      lastError = error instanceof Error ? error : new Error(String(error));
+      console.error(`Attempt ${attempt} failed:`, lastError);
+      
+      // If this was the last attempt, throw the error
+      if (attempt === maxRetries) {
+        throw new Error(`Failed to get keywords for ${pinyinName} after ${maxRetries} attempts. Last error: ${lastError.message}`);
+      }
+      
+      // Wait before retrying (exponential backoff)
+      await new Promise(resolve => setTimeout(resolve, Math.pow(2, attempt) * 1000));
+    }
   }
+  
+  // This should never be reached due to the throw in the loop, but TypeScript needs it
+  throw lastError || new Error("Unknown error occurred");
 };
 
 export const generateImageForName = async (originalName: string, pinyinName: string, keywords: string[]): Promise<string> => {
