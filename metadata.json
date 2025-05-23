@@ -1,0 +1,6 @@
+{
+  "name": "MemoraHanzi",
+  "description": "An application to help remember Chinese names by providing Pinyin, AI-generated phonetic/semantic associations, and a memorable visual representation. Includes a helper for names from arXiv author lists.",
+  "requestFramePermissions": [],
+  "prompt": ""
+}
